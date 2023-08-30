@@ -1,0 +1,170 @@
+
+#variable run equal 1
+#variable seed equal 653541
+
+# how often on average do proteins switch (time steps)
+#variable switchSteps equal 200000
+
+###
+# Box and units  (use LJ units and periodic boundaries)
+###
+
+units lj
+
+atom_style angle 
+
+boundary p p p
+
+###
+# Pair interactions require lists of neighbours to be calculated
+###
+neighbor 1.9 bin
+neigh_modify every 1 delay 1 check yes 
+
+### READ "start" data file ### -- ADD EXTRA ATOM TYPE
+# Remember to change the number after the setence which stands for the number of new atom types added
+read_data DNA_prot.equlilb_data extra/atom/types 4
+
+# need to set mass of new type
+mass 3 1.0
+mass 4 1.0
+mass 5 1.0
+mass 6 1.0
+mass 7 1.0
+mass 8 1.0
+
+###
+# Define groups 
+###
+group all type 1 2 3 4 5 6 7 8  # all group
+group polymer type 1 5 6 7      # group for polymer
+group sphereprot type 2 8   # group for sphere proteins, 2 for ON state, 8 for OFF state
+group dumbprot type 3 4    # group for dumbell proteins, 3 for reader, 4 for writer
+
+# dumbprot will be rigid bodies
+# need a group for all atoms not in rigid bodies
+group notrigids union polymer sphereprot
+###################################################################
+# Stiffness term
+#
+# E = K * (1+cos(theta)), K>0
+#
+angle_style   cosine 
+angle_coeff   1 4.0
+
+###################################################################
+
+
+###################################################################
+# Pair interaction between non-bonded atoms
+
+pair_style      lj/cut 1.12246152962189
+pair_modify     shift yes
+pair_coeff      * * 1.0 1.0 1.12246152962189
+
+###################################################################
+
+###################################################################
+# Pair interaction between bonded atoms
+
+bond_style fene
+special_bonds fene #<=== I M P O R T A N T (new command)
+bond_coeff 1  30.0   1.6   1.0   1.0
+
+###################################################
+###
+# Set up fixes
+###
+#include /Home/cbrackle/work/seeds/seed.${run} # Load a seed for the Langevin integrator from a file
+
+
+# fix nve and lagevin as usual for the DNA and sphere prots only
+fix myFIX1 notrigids nve                             # NVE integrator
+fix myFIX2 notrigids langevin   1.0 1.0 1.0 ${seed}  # langevin thermostat
+#      ^
+#      |
+#  group name
+
+# and fix rigid/small for the rigid bodies
+fix myFIX3 dumbprot rigid/small molecule langevin 1.0 1.0 1.0 ${seed}
+# use a different seed to above
+# this include nve and langevin fixed for the centre of mass of each body
+###################################################
+###
+# Output
+###
+
+dump dmp all custom 20000 dump.${runnumber}.DNA id type x y z ix iy iz 
+#dump dmp all custom 200 dump.${runnumber}.DNA id type x y z ix iy iz 
+
+##### Sample thermodynamic info  (temperature, energy, pressure, etc.) #####
+thermo 100000
+thermo_style   custom   step  temp  epair
+############################################################################
+
+#### Walls (90x90x90 box, should have system size slightly larger)
+#fix pxhi all indent 10.0 plane x 45.0 hi 
+#fix pyhi all indent 10.0 plane y 45.0 hi 
+#fix pzhi all indent 10.0 plane z 45.0 hi 
+#fix pxlo all indent 10.0 plane x -45.0 lo 
+#fix pylo all indent 10.0 plane y -45.0 lo 
+#fix pzlo all indent 10.0 plane z -45.0 lo 
+
+
+###
+# set timestep of integrator
+###
+timestep 0.01 
+
+pair_style hybrid lj/cut 1.12246152962189 morse 1.0
+pair_modify shift yes  
+neigh_modify exclude molecule/intra dumbprot
+
+# set all interacting the same to start
+pair_coeff  * * lj/cut 1.0 1.0 1.12246152962189
+
+###########
+# add attractive interactions between
+# type 1 (polymer) and type 2 (ON proteins)
+
+# strong attraction between ON sphere and ATAC ON polymer
+pair_coeff  2 7 lj/cut 8.0 1.0 1.8
+
+# weak attraction between ON sphere and ATAC OFF
+pair_coeff  2 5 lj/cut 2.5 1.0 1.8
+
+# weak interaction between ON sphere and k27ac polymer
+pair_coeff  2 6 lj/cut 2.5 1.0 1.8
+
+###########
+# do interactions for the reader-writers
+# have one side of the dumbells stick to the polymer
+# by going inside it. More potential parameters are:
+#   -- energy
+#   -- shape
+#   -- distance - set as 0 to allow it to go inside
+#   -- cutoff
+
+# reader and unmarked polymer -- set with energy=0 so reader can go inside but does not stick
+pair_coeff 1 3 morse 0.0 1.75 0.0 0.9
+
+# morse potential between: ATAC ON and reader
+pair_coeff 3 7 morse 12.0 1.75 0.0 1.3
+
+# ATAC OFF and reader
+pair_coeff 3 5 morse 12.0 1.75 0.0 1.3
+
+# k27ac and reader
+#pair_coeff 3 6 morse 0.0 1.75 0.0 0.9  # not sticking to k27ac 
+pair_coeff 3 6 morse 12.0 1.75 0.0 1.3  # sticking to k27ac 
+
+
+#group todel id <> 2043 2202
+#delete_atoms group todel
+
+#### run
+
+
+#write_restart DNA.${runnumber}.restart
+
+### set distance for switching to 3

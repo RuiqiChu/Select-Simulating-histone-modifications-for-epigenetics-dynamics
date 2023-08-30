@@ -1,0 +1,156 @@
+###############################################
+# LAMMPS script for a DNA and proteins
+###############################################
+
+###
+# Box and units  (use LJ units and periodic boundaries)
+###
+
+units lj                 # use lennard-jones (i.e. dimensionless) units
+atom_style angle         # atoms with bonds and angles
+
+boundary p p p           # all boundaries are periodic
+
+###
+# Pair interactions require lists of neighbours to be calculated
+###
+neighbor 1.9 bin
+neigh_modify every 1 delay 1 check yes
+
+
+### 
+# READ "start" data file 
+###
+read_data lammps.input
+
+### 
+# Reset timestep 
+###
+reset_timestep 0 
+
+###
+# Define groups 
+###
+group all type 1 2 3 4     # all group
+group polymer type 1       # group for polymer
+group sphereprot type 2    # group for sphere proteins
+
+
+
+
+###
+# Dump configurations
+###
+dump dum1 all custom 5000 dump_equilib.DNA_prot id type x y z ix iy iz
+
+###
+# Set up interactions - start with 'soft' potentials
+###
+
+## angles
+angle_style  cosine
+angle_coeff   1  4.0
+
+## Between bonded atoms
+bond_style   harmonic 
+# For style harmonic, specify:
+#   * bond type
+#   * K (energy/distance^2) 
+#   * R0 (distance)
+bond_coeff   1   90.0   1.1
+
+## Between non-bonded atoms
+pair_style     soft 1.12246152962189
+#  pair_coeff for soft, specify:
+#    * atom type interacting with
+#    * atom type 
+#    * energy
+#    * cutoff
+
+# all proteins interact as unit diameter spheres
+pair_coeff * *  100.0 1.12246152962189  
+
+
+###
+# Set up fixes
+###
+variable seed equal 54654651     # a seed for the thermostat
+
+
+# fix nve and lagevin as usual for the DNA and sphere prots only
+fix myFIX1 all nve                             # NVE integrator
+fix myFIX2 all langevin   1.0 1.0 1.0 ${seed}  # langevin thermostat
+#      ^
+#      |
+#  group name
+
+
+
+##### Output thermodynamic info  (temperature, energy, pressure, etc.) #####
+thermo 5000
+thermo_style   custom   step  temp  epair  emol  press  vol
+############################################################################
+
+###
+# set timestep of integrator
+###
+timestep 0.01
+
+###
+# run integration for a number of steps to equilibrate with soft potentials
+# to remove any overlaps
+###
+ 
+run 500000
+
+###
+# now switch to the potentials we really want
+###
+
+## Between non-bonded atoms
+pair_style      lj/cut 1.12246152962189
+pair_modify shift yes        # option to ensure energy is calculated corectly
+#  pair_coeff for LJ, specify 4:
+#    * atom type interacting with
+#    * atom type
+#    * energy
+#    * mean diameter of the two atom types
+#    * cutoff
+
+# still have all atoms interacting the same
+pair_coeff  * * 1.0 1.0 1.12246152962189
+
+# do a few tricks to prevent crashes
+special_bonds lj 1.0 1.0 1.0
+timestep 0.001
+neigh_modify every 1 delay 1 check no
+run 5000
+neigh_modify every 1 delay 1 check yes
+run 5000
+
+## Between bonded atoms
+bond_style   fene
+special_bonds fene #<=== I M P O R T A N T prevents LJ from being counted twice
+# For style FENE, specify:
+#   * bond type
+#   * K (energy/distance^2) 
+#   * R0 (distance)
+#   * epsilon
+#   * sigma
+bond_coeff   1    30.0   1.6   1.0   1.0
+
+neigh_modify every 1 delay 1 check no
+run 5000
+neigh_modify every 1 delay 1 check yes
+run 5000
+timestep 0.01
+run 5000
+
+###
+# now do a longer run
+###
+
+run 1000000
+
+
+write_data DNA_prot.equlilb_data nocoeff
